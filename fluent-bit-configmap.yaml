@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: tekton-logging
+  labels:
+    k8s-app: fluentd-logging
+data:
+  # Configuration files: server, input, filters and output
+  # ======================================================
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Log_Level     debug
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    @INCLUDE input-cri-o.conf
+    @INCLUDE output-multi-s3.conf
+
+  input-cri-o.conf: |
+    [INPUT]
+        Name              tail
+        Tag               kube.<namespace_name>.<pod_name>
+        Path              /var/log/containers/*_step-main-*.log
+        Parser            cri-o
+        DB                /var/log/containers/flb_kube.db
+        Tag_Regex         (?<pod_name>[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
+        Mem_Buf_Limit     5MB
+        Buffer_Chunk_Size 1MB
+        Buffer_Max_Size   2MB
+        Skip_Long_Lines   On
+        Refresh_Interval  30
+
+  output-multi-s3.conf: |
+    [OUTPUT]
+        Name            multi-s3
+        Match           *
+
+  parsers.conf: |
+    [PARSER]
+        Name   cri-o
+        Format regex
+        Regex  ^(?<time>.+)\b(?<stream>stdout|stderr)\s\w\s(?<log>.*)$
+        Time_Key time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Reserve_Data On
+        Preserve_Key On

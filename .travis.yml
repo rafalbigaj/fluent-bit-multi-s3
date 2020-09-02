@@ -1,0 +1,42 @@
+language: go
+
+go:
+  - 1.14.x
+
+os:
+  - linux
+
+services:
+  - docker
+
+env:
+  global:
+    - GO111MODULE=on
+    - DOCKER_SERVER=us.icr.io
+    - DOCKER_REGISTRY=ai-lifecycle
+
+jobs:
+  include:
+    - stage: build
+      script: "go build -buildmode=c-shared -o out_multi_s3.so multi-s3-output"
+    - stage: test
+      script: "cd multi-s3-output && go test"
+    - stage: tag
+      if: branch = master AND type = push
+      script:
+        - git config --global user.email "builds@travis.com"
+        - git config --global user.name "Travis CI"
+        - IMAGE_TAG=$(git describe --tags $(git rev-list --tags --max-count=1) | awk -F '.' '{print $1"."$2"."++$3}')
+        - git tag -a $IMAGE_TAG -m "Generated tag from TravisCI"
+        - git push -q https://$GITHUB_TOKEN@github.com/rafalbigaj/fluent-bit-multi-s3.git --tags
+    - stage: deploy
+      if: tag IS present
+      script:
+        - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD $DOCKER_SERVER
+        - docker build multi-s3-output -t "$DOCKER_SERVER/$DOCKER_REGISTRY/fluent-bit-multi-s3:$TRAVIS_TAG"
+        - docker tag "$DOCKER_SERVER/$DOCKER_REGISTRY/fluent-bit-multi-s3:$TRAVIS_TAG" "$DOCKER_SERVER/$DOCKER_REGISTRY/fluent-bit-multi-s3:latest"
+        - docker push "$DOCKER_SERVER/$DOCKER_REGISTRY/fluent-bit-multi-s3:$TRAVIS_TAG"
+        - docker push "$DOCKER_SERVER/$DOCKER_REGISTRY/fluent-bit-multi-s3:latest"
+
+notifications:
+  email: false
