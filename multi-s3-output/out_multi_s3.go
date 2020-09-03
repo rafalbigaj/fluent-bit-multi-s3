@@ -55,21 +55,22 @@ type PluginContext struct {
 
 func NewPluginContext(plugin unsafe.Pointer, client *kubernetes.Clientset) *PluginContext {
 	ctx := &PluginContext{ClientSet: client}
-	loadPluginConfig(plugin, &ctx.ArtifactEndpointAnnotation, "Artifact_Endpoint_Annotation", "tekton.dev/artifact_endpoint")
-	loadPluginConfig(plugin, &ctx.ArtifactEndpointSchemeAnnotation, "Artifact_Endpoint_Scheme_Annotation", "tekton.dev/artifact_endpoint_scheme")
-	loadPluginConfig(plugin, &ctx.ArtifactBucketAnnotation, "Artifact_Bucket_Annotation", "tekton.dev/artifact_bucket")
-	loadPluginConfig(plugin, &ctx.ArtifactSecretAnnotation, "Artifact_Secret_Annotation", "tekton.dev/artifact_secret")
-	loadPluginConfig(plugin, &ctx.PipelineRunLabel, "Pipeline_Run_Label", "tekton.dev/pipelineRun")
-	loadPluginConfig(plugin, &ctx.PipelineTaskLabel, "Pipeline_Task_Label", "tekton.dev/pipelineTask")
-	loadPluginConfig(plugin, &ctx.PipelineTaskRunLabel, "Pipeline_Task_Run_Label", "tekton.dev/taskRun")
+	ctx.ArtifactEndpointAnnotation = getPluginConfig(plugin, "Artifact_Endpoint_Annotation", "tekton.dev/artifact_endpoint")
+	ctx.ArtifactEndpointSchemeAnnotation = getPluginConfig(plugin, "Artifact_Endpoint_Scheme_Annotation", "tekton.dev/artifact_endpoint_scheme")
+	ctx.ArtifactBucketAnnotation = getPluginConfig(plugin, "Artifact_Bucket_Annotation", "tekton.dev/artifact_bucket")
+	ctx.ArtifactSecretAnnotation = getPluginConfig(plugin, "Artifact_Secret_Annotation", "tekton.dev/artifact_secret")
+	ctx.PipelineRunLabel = getPluginConfig(plugin, "Pipeline_Run_Label", "tekton.dev/pipelineRun")
+	ctx.PipelineTaskLabel = getPluginConfig(plugin, "Pipeline_Task_Label", "tekton.dev/pipelineTask")
+	ctx.PipelineTaskRunLabel = getPluginConfig(plugin, "Pipeline_Task_Run_Label", "tekton.dev/taskRun")
 	return ctx
 }
 
-func loadPluginConfig(plugin unsafe.Pointer, out *string, configKey string, defValue string) {
-	*out = output.FLBPluginConfigKey(plugin, configKey)
-	if *out == "" {
-		*out = defValue
+func getPluginConfig(plugin unsafe.Pointer, configKey string, defValue string) string {
+	config := output.FLBPluginConfigKey(plugin, configKey)
+	if config == "" {
+		return defValue
 	}
+	return config
 }
 
 //export FLBPluginRegister
@@ -83,12 +84,8 @@ func FLBPluginInit(plugin unsafe.Pointer) int {
 
 	var err error
 	var config *rest.Config
-	kubeConfig := os.Getenv("KUBECONFIG")
-	if kubeConfig != "" {
-		config, err = clientcmd.BuildConfigFromFlags("", kubeConfig)
-	} else {
-		config, err = rest.InClusterConfig()
-	}
+	kubeConfig := os.Getenv("KUBECONFIG") // only required if out-of-cluster
+	config, err = clientcmd.BuildConfigFromFlags("", kubeConfig)
 	if err != nil {
 		klog.Fatalln(err.Error())
 		return output.FLB_ERROR
@@ -117,8 +114,11 @@ func FLBPluginFlush(data unsafe.Pointer, length C.int, tag *C.char) int {
 func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, cTag *C.char) int {
 	// Type assert context back into the original type for the Go variable
 	tag := C.GoString(cTag)
+	// Get plugin context (*PluginContext) initialized in `FLBPluginInit`
 	pluginCtx := output.FLBPluginGetContext(ctx).(*PluginContext)
 	kubeClient := pluginCtx.ClientSet
+
+	// input-cri-o produces tags in form: "kube.<namespace_name>.<pod_name>"
 	s := strings.Split(tag, ".")
 	namespace := s[1]
 	podName := s[2]
