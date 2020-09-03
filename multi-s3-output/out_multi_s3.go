@@ -229,7 +229,7 @@ func ArchiveLog(data []byte, dst io.Writer) int {
 		var timestamp time.Time
 		switch t := ts.(type) {
 		case output.FLBTime:
-			timestamp = ts.(output.FLBTime).Time
+			timestamp = t.Time
 		case int64:
 			timestamp = time.Unix(t, 0)
 		case uint64:
