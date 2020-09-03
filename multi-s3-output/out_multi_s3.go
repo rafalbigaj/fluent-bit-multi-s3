@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"strings"
 	"time"
 	"unsafe"
@@ -215,6 +214,8 @@ type RunLogEntry struct {
 	Timestamp time.Time `json:"timestamp,omitempty"`
 }
 
+// ArchiveLog decodes records (msgpack) and rewrites them to JSON and store in `dst` as a compressed (gzip)
+// Fluent-bit records that come from "cri-o" parser contain a timestamp (as FLBTime or int), "stream" (ignored) and "log".
 func ArchiveLog(data []byte, dst io.Writer) int {
 	gw := gzip.NewWriter(dst)
 	ptr := C.CBytes(data)
@@ -239,18 +240,17 @@ func ArchiveLog(data []byte, dst io.Writer) int {
 			timestamp = time.Now()
 		}
 
-		var logKey interface{} = "log"
-		logVal := record[logKey]
-		if logVal != nil && !reflect.ValueOf(logVal).IsNil() {
-			log := string(logVal.([]byte))
-			entry := RunLogEntry{Timestamp: timestamp, Log: log}
-			bytes, err := json.Marshal(entry)
-			if err == nil {
-				err = writeBytesLn(gw, bytes)
-			}
-			if err != nil {
-				klog.Error("[multi-s3] Error in writing to tarball:", err)
-				return output.FLB_ERROR
+		if logVal := record["log"]; logVal != nil {
+			if log, ok := logVal.([]byte); ok {
+				entry := RunLogEntry{Timestamp: timestamp, Log: string(log)}
+				bytes, err := json.Marshal(entry)
+				if err == nil {
+					err = writeBytesLn(gw, bytes)
+				}
+				if err != nil {
+					klog.Error("[multi-s3] Error in writing to tarball:", err)
+					return output.FLB_ERROR
+				}
 			}
 		}
 	}
@@ -281,6 +281,8 @@ type S3BucketContext struct {
 	Bucket         string
 }
 
+// PutLogObject creates a new object in the bucket with the given key and content from reader.
+// If the object with the key already exists its content is merged with the new one before upload.
 func PutLogObject(ctx S3BucketContext, key string, reader io.Reader, objectSize int64) (err error) {
 	minioClient, err := createMinioClient(ctx.Endpoint, ctx.EndpointSchema, ctx.AccessKey, ctx.SecretKey)
 	if err != nil {
