@@ -36,7 +36,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 )
@@ -81,10 +80,8 @@ func FLBPluginRegister(def unsafe.Pointer) int {
 func FLBPluginInit(plugin unsafe.Pointer) int {
 	klog.InitFlags(nil)
 
-	var err error
-	var config *rest.Config
 	kubeConfig := os.Getenv("KUBECONFIG") // only required if out-of-cluster
-	config, err = clientcmd.BuildConfigFromFlags("", kubeConfig)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeConfig)
 	if err != nil {
 		klog.Fatalln(err.Error())
 		return output.FLB_ERROR
@@ -227,18 +224,7 @@ func ArchiveLog(data []byte, dst io.Writer) int {
 			break
 		}
 
-		var timestamp time.Time
-		switch t := ts.(type) {
-		case output.FLBTime:
-			timestamp = t.Time
-		case int64:
-			timestamp = time.Unix(t, 0)
-		case uint64:
-			timestamp = time.Unix(int64(t), 0)
-		default:
-			fmt.Println("time provided invalid, defaulting to now.")
-			timestamp = time.Now()
-		}
+		timestamp := getRecordTimestamp(ts)
 
 		if logVal := record["log"]; logVal != nil {
 			if log, ok := logVal.([]byte); ok {
@@ -262,6 +248,21 @@ func ArchiveLog(data []byte, dst io.Writer) int {
 	}
 
 	return output.FLB_OK
+}
+
+func getRecordTimestamp(ts interface{}) (timestamp time.Time) {
+	switch t := ts.(type) {
+	case output.FLBTime:
+		timestamp = t.Time
+	case int64:
+		timestamp = time.Unix(t, 0)
+	case uint64:
+		timestamp = time.Unix(int64(t), 0)
+	default:
+		klog.Warningln("time provided invalid, defaulting to now.")
+		timestamp = time.Now()
+	}
+	return
 }
 
 func writeBytesLn(dst io.Writer, bytes []byte) (err error) {
