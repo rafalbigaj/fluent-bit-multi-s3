@@ -18,7 +18,7 @@ env:
 jobs:
   include:
     - stage: build
-      script: "go build -buildmode=c-shared -o out_multi_s3.so multi-s3-output"
+      script: "cd multi-s3-output && go build -buildmode=c-shared -o out_multi_s3.so ."
     - stage: test
       script: "cd multi-s3-output && go test"
     - stage: tag

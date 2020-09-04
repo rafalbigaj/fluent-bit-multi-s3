@@ -1,5 +1,7 @@
 # Fluent-Bit `multi-s3` Output Plugin
 
+[![Build Status](https://travis-ci.org/rafalbigaj/fluent-bit-multi-s3.svg?branch=master)](https://travis-ci.org/rafalbigaj/fluent-bit-multi-s3)
+
 Output plugin (Go) for fluent bit with support for multiple S3 instances
 
 ## Installation
