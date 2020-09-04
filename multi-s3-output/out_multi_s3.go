@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -101,7 +102,7 @@ func FLBPluginInit(plugin unsafe.Pointer) int {
 }
 
 //export FLBPluginFlush
-func FLBPluginFlush(data unsafe.Pointer, length C.int, tag *C.char) int {
+func FLBPluginFlush(_ unsafe.Pointer, _ C.int, _ *C.char) int {
 	klog.Warning("[multi-s3] Flush called for unknown instance")
 	return output.FLB_OK
 }
@@ -229,9 +230,9 @@ func ArchiveLog(data []byte, dst io.Writer) int {
 		if logVal := record["log"]; logVal != nil {
 			if log, ok := logVal.([]byte); ok {
 				entry := RunLogEntry{Timestamp: timestamp, Log: string(log)}
-				bytes, err := json.Marshal(entry)
+				eb, err := json.Marshal(entry)
 				if err == nil {
-					err = writeBytesLn(gw, bytes)
+					err = writeBytesLn(gw, eb)
 				}
 				if err != nil {
 					klog.Error("[multi-s3] Error in writing to tarball:", err)
@@ -292,7 +293,8 @@ func PutLogObject(ctx S3BucketContext, key string, reader io.Reader, objectSize 
 
 	mergedReader := reader
 	mergedSize := objectSize
-	if object, getErr := minioClient.GetObject(ctx.Bucket, key, minio.GetObjectOptions{}); getErr == nil {
+	object, err := minioClient.GetObject(ctx.Bucket, key, minio.GetObjectOptions{})
+	if err == nil {
 		if objectInfo, getErr := object.Stat(); getErr == nil {
 			klog.Infof("[multi-s3] Found existing s3 object: %s (%d bytes), merging...", key, objectInfo.Size)
 			var buf bytes.Buffer
@@ -303,7 +305,12 @@ func PutLogObject(ctx S3BucketContext, key string, reader io.Reader, objectSize 
 			mergedReader = &buf
 			mergedSize = int64(buf.Len())
 			klog.Infof("[multi-s3] Merged s3 object: %s (%d bytes).", key, mergedSize)
+		} else if res, ok := getErr.(minio.ErrorResponse); !ok || res.StatusCode != http.StatusNotFound {
+			err = getErr
+			return
 		}
+	} else {
+		return
 	}
 
 	_, err = minioClient.PutObject(ctx.Bucket, key, mergedReader, mergedSize, minio.PutObjectOptions{})
