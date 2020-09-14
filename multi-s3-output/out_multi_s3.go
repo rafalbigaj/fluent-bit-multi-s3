@@ -49,7 +49,6 @@ type PluginContext struct {
 	ArtifactSecretAnnotation         string
 	PipelineRunLabel                 string
 	PipelineTaskLabel                string
-	PipelineTaskRunLabel             string
 }
 
 func NewPluginContext(plugin unsafe.Pointer, client *kubernetes.Clientset) *PluginContext {
@@ -60,7 +59,6 @@ func NewPluginContext(plugin unsafe.Pointer, client *kubernetes.Clientset) *Plug
 	ctx.ArtifactSecretAnnotation = getPluginConfig(plugin, "Artifact_Secret_Annotation", "tekton.dev/artifact_secret")
 	ctx.PipelineRunLabel = getPluginConfig(plugin, "Pipeline_Run_Label", "tekton.dev/pipelineRun")
 	ctx.PipelineTaskLabel = getPluginConfig(plugin, "Pipeline_Task_Label", "tekton.dev/pipelineTask")
-	ctx.PipelineTaskRunLabel = getPluginConfig(plugin, "Pipeline_Task_Run_Label", "tekton.dev/taskRun")
 	return ctx
 }
 
@@ -152,7 +150,6 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, cTag *C.char) int
 
 	pipelineRun := pod.Labels[pluginCtx.PipelineRunLabel]
 	pipelineTask := pod.Labels[pluginCtx.PipelineTaskLabel]
-	pipelineTaskRunId := pod.Labels[pluginCtx.PipelineTaskRunLabel]
 
 	accessKey, ok := secret.Data["accesskey"]
 	if !ok {
@@ -180,7 +177,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, cTag *C.char) int
 		return result
 	}
 
-	key := fmt.Sprintf("artifacts/%s/%s/%s--step-main_log.gz", pipelineRun, pipelineTask, pipelineTaskRunId)
+	key := fmt.Sprintf("artifacts/%s/%s/step-main.log", pipelineRun, pipelineTask)
 	klog.Infof("[multi-s3] Uploading file: %s (%d bytes)...", key, buf.Len())
 	err = PutLogObject(s3ctx, key, &buf, int64(buf.Len()))
 	if err != nil {
