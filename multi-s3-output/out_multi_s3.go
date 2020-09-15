@@ -177,7 +177,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, cTag *C.char) int
 		return result
 	}
 
-	key := fmt.Sprintf("artifacts/%s/%s/step-main.log", pipelineRun, pipelineTask)
+	key := fmt.Sprintf("artifacts/%s/%s/step-main.tgz", pipelineRun, pipelineTask)
 	klog.Infof("[multi-s3] Uploading file: %s (%d bytes)...", key, buf.Len())
 	err = PutLogObject(s3ctx, key, &buf, int64(buf.Len()))
 	if err != nil {
