@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/fluent/fluent-bit-go/output"
 	"github.com/minio/minio-go"
 	"github.com/minio/minio-go/pkg/credentials"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -42,21 +44,15 @@ import (
 )
 
 type PluginContext struct {
-	ClientSet                        *kubernetes.Clientset
-	ArtifactEndpointAnnotation       string
-	ArtifactEndpointSchemeAnnotation string
-	ArtifactBucketAnnotation         string
-	ArtifactSecretAnnotation         string
-	PipelineRunLabel                 string
-	PipelineTaskLabel                string
+	ClientSet              *kubernetes.Clientset
+	S3SecretNameAnnotation string
+	PipelineRunLabel       string
+	PipelineTaskLabel      string
 }
 
 func NewPluginContext(plugin unsafe.Pointer, client *kubernetes.Clientset) *PluginContext {
 	ctx := &PluginContext{ClientSet: client}
-	ctx.ArtifactEndpointAnnotation = getPluginConfig(plugin, "Artifact_Endpoint_Annotation", "tekton.dev/artifact_endpoint")
-	ctx.ArtifactEndpointSchemeAnnotation = getPluginConfig(plugin, "Artifact_Endpoint_Scheme_Annotation", "tekton.dev/artifact_endpoint_scheme")
-	ctx.ArtifactBucketAnnotation = getPluginConfig(plugin, "Artifact_Bucket_Annotation", "tekton.dev/artifact_bucket")
-	ctx.ArtifactSecretAnnotation = getPluginConfig(plugin, "Artifact_Secret_Annotation", "tekton.dev/artifact_secret")
+	ctx.S3SecretNameAnnotation = getPluginConfig(plugin, "S3_Secret_Name_Annotation", "orchestration/artifact_secret")
 	ctx.PipelineRunLabel = getPluginConfig(plugin, "Pipeline_Run_Label", "tekton.dev/pipelineRun")
 	ctx.PipelineTaskLabel = getPluginConfig(plugin, "Pipeline_Task_Label", "tekton.dev/pipelineTask")
 	return ctx
@@ -130,10 +126,10 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, cTag *C.char) int
 		}
 	}
 
-	secretName := pod.Annotations[pluginCtx.ArtifactSecretAnnotation]
+	secretName := pod.Annotations[pluginCtx.S3SecretNameAnnotation]
 	if secretName == "" {
-		klog.Warningf("[multi-s3] The secret name for artifact repository is not set. Using default...")
-		secretName = "mlpipeline-minio-artifact"
+		klog.Errorf("[multi-s3] The secret name for artifact repository is not set.")
+		return output.FLB_ERROR // no way to recover
 	}
 	klog.Infof("[multi-s3] Secret: %q", secretName)
 
@@ -148,27 +144,14 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, cTag *C.char) int
 		}
 	}
 
+	s3ctx, err := LoadS3BucketContextFromSecret(secret)
+	if err != nil {
+		klog.Errorf("[multi-s3] Invalid s3 secret %q. %s", secretName, err)
+		return output.FLB_ERROR // no reason to retry
+	}
+
 	pipelineRun := pod.Labels[pluginCtx.PipelineRunLabel]
 	pipelineTask := pod.Labels[pluginCtx.PipelineTaskLabel]
-
-	accessKey, ok := secret.Data["accesskey"]
-	if !ok {
-		klog.Errorf("[multi-s3] Invalid s3 secret %q. No access key.", secretName)
-		return output.FLB_ERROR // no reason to retry
-	}
-	secretKey, ok := secret.Data["secretkey"]
-	if !ok {
-		klog.Errorf("[multi-s3] Invalid s3 secret %q. No secret key.", secretName)
-		return output.FLB_ERROR // no reason to retry
-	}
-
-	s3ctx := S3BucketContext{
-		Endpoint:       pod.Annotations[pluginCtx.ArtifactEndpointAnnotation],
-		EndpointSchema: pod.Annotations[pluginCtx.ArtifactEndpointSchemeAnnotation],
-		AccessKey:      string(accessKey),
-		SecretKey:      string(secretKey),
-		Bucket:         pod.Annotations[pluginCtx.ArtifactBucketAnnotation],
-	}
 
 	var buf bytes.Buffer
 	b := C.GoBytes(data, C.int(length))
@@ -198,7 +181,7 @@ func main() {
 }
 
 func createMinioClient(endpoint string, endpointSchema string, accessKey string, secretKey string) (*minio.Client, error) {
-	secure := endpointSchema == "https://"
+	secure := strings.HasPrefix(endpointSchema, "https")
 	cred := credentials.NewStaticV4(accessKey, secretKey, "")
 
 	return minio.NewWithCredentials(endpoint, cred, secure, "")
@@ -282,7 +265,7 @@ type S3BucketContext struct {
 
 // PutLogObject creates a new object in the bucket with the given key and content from reader.
 // If the object with the key already exists its content is merged with the new one before upload.
-func PutLogObject(ctx S3BucketContext, key string, reader io.Reader, objectSize int64) (err error) {
+func PutLogObject(ctx *S3BucketContext, key string, reader io.Reader, objectSize int64) (err error) {
 	minioClient, err := createMinioClient(ctx.Endpoint, ctx.EndpointSchema, ctx.AccessKey, ctx.SecretKey)
 	if err != nil {
 		return
@@ -313,6 +296,64 @@ func PutLogObject(ctx S3BucketContext, key string, reader io.Reader, objectSize 
 	_, err = minioClient.PutObject(ctx.Bucket, key, mergedReader, mergedSize, minio.PutObjectOptions{})
 
 	return
+}
+
+type S3Credentials struct {
+	ApiKey    string `json:"api_key",omitempty`
+	ServiceId string `json:"service_id",omitempty`
+	AccessKey string `json:"access_key_id",omitempty`
+	SecretKey string `json:"secret_access_key",omitempty`
+}
+
+type S3CredentialsPerRole struct {
+	Admin  S3Credentials `json:"admin"`
+	Editor S3Credentials `json:"editor"`
+	Viewer S3Credentials `json:"viewer"`
+}
+
+type S3Properties struct {
+	BucketName  string               `json:"bucket_name"`
+	EndpointUrl string               `json:"endpoint_url"`
+	Credentials S3CredentialsPerRole `json:"credentials"`
+}
+
+type S3Config struct {
+	Type       string       `json:"type,omitempty"`
+	Properties S3Properties `json:"properties,omitempty"`
+}
+
+func LoadS3Config(data []byte) (*S3Config, error) {
+	var credentials S3Config
+	if err := json.Unmarshal(data, &credentials); err != nil {
+		return nil, err
+	}
+	return &credentials, nil
+}
+
+func LoadS3BucketContextFromSecret(secret *v1.Secret) (*S3BucketContext, error) {
+	config, ok := secret.Data["config"]
+	if !ok {
+		return nil, fmt.Errorf("no config key")
+	}
+	s3Config, err := LoadS3Config(config)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse s3 credentials: %s", err)
+	}
+
+	endpointUrl, err := url.Parse(s3Config.Properties.EndpointUrl)
+	if err != nil {
+		return nil, fmt.Errorf("invalid s3 endpoint URL: %s, %s", s3Config.Properties.EndpointUrl, err)
+	}
+
+	s3ctx := S3BucketContext{
+		Endpoint:       endpointUrl.Host,
+		EndpointSchema: endpointUrl.Scheme,
+		AccessKey:      s3Config.Properties.Credentials.Editor.AccessKey,
+		SecretKey:      s3Config.Properties.Credentials.Editor.SecretKey,
+		Bucket:         s3Config.Properties.BucketName,
+	}
+
+	return &s3ctx, nil
 }
 
 func mergeObjects(a, b io.Reader, dst io.Writer) (err error) {
