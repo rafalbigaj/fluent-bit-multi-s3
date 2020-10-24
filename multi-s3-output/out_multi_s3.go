@@ -90,6 +90,10 @@ func FLBPluginInit(plugin unsafe.Pointer) int {
 
 	ctx := NewPluginContext(plugin, clientSet)
 
+	klog.Infof("[multi-s3] S3SecretNameAnnotation: %s", ctx.S3SecretNameAnnotation)
+	klog.Infof("[multi-s3] PipelineRunLabel: %s", ctx.PipelineRunLabel)
+	klog.Infof("[multi-s3] PipelineTaskLabel: %s", ctx.PipelineTaskLabel)
+
 	output.FLBPluginSetContext(plugin, ctx)
 
 	return output.FLB_OK

@@ -37,8 +37,9 @@ data:
 
   output-multi-s3.conf: |
     [OUTPUT]
-        Name            multi-s3
-        Match           *
+        Name                        multi-s3
+        S3_Secret_Name_Annotation   orchestration/cosSecretName
+        Match                       *
 
   parsers.conf: |
     [PARSER]
