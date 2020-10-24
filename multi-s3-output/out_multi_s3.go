@@ -44,15 +44,15 @@ import (
 )
 
 type PluginContext struct {
-	ClientSet              *kubernetes.Clientset
-	S3SecretNameAnnotation string
-	PipelineRunLabel       string
-	PipelineTaskLabel      string
+	ClientSet         *kubernetes.Clientset
+	S3SecretNameLabel string
+	PipelineRunLabel  string
+	PipelineTaskLabel string
 }
 
 func NewPluginContext(plugin unsafe.Pointer, client *kubernetes.Clientset) *PluginContext {
 	ctx := &PluginContext{ClientSet: client}
-	ctx.S3SecretNameAnnotation = getPluginConfig(plugin, "S3_Secret_Name_Annotation", "orchestration/artifact_secret")
+	ctx.S3SecretNameLabel = getPluginConfig(plugin, "S3_Secret_Name_Label", "orchestration/cosSecretName")
 	ctx.PipelineRunLabel = getPluginConfig(plugin, "Pipeline_Run_Label", "tekton.dev/pipelineRun")
 	ctx.PipelineTaskLabel = getPluginConfig(plugin, "Pipeline_Task_Label", "tekton.dev/pipelineTask")
 	return ctx
@@ -90,7 +90,7 @@ func FLBPluginInit(plugin unsafe.Pointer) int {
 
 	ctx := NewPluginContext(plugin, clientSet)
 
-	klog.Infof("[multi-s3] S3SecretNameAnnotation: %s", ctx.S3SecretNameAnnotation)
+	klog.Infof("[multi-s3] S3SecretNameLabel: %s", ctx.S3SecretNameLabel)
 	klog.Infof("[multi-s3] PipelineRunLabel: %s", ctx.PipelineRunLabel)
 	klog.Infof("[multi-s3] PipelineTaskLabel: %s", ctx.PipelineTaskLabel)
 
@@ -130,7 +130,7 @@ func FLBPluginFlushCtx(ctx, data unsafe.Pointer, length C.int, cTag *C.char) int
 		}
 	}
 
-	secretName := pod.Annotations[pluginCtx.S3SecretNameAnnotation]
+	secretName := pod.Labels[pluginCtx.S3SecretNameLabel]
 	if secretName == "" {
 		klog.Errorf("[multi-s3] The secret name for artifact repository is not set.")
 		return output.FLB_ERROR // no way to recover
