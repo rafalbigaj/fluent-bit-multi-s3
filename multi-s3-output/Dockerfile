@@ -8,7 +8,7 @@ WORKDIR /opt/output
 RUN go build -buildmode=c-shared -o out_multi_s3.so .
 
 
-FROM fluent/fluent-bit:1.5-debug
+FROM fluent/fluent-bit:1.6
 
 WORKDIR /opt/fluent-bit/
 
