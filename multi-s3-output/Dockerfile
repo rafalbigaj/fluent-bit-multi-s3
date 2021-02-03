@@ -1,6 +1,8 @@
-FROM registry.access.redhat.com/ubi8/go-toolset:latest AS builder
+FROM registry.access.redhat.com/ubi8/ubi-minimal:latest AS builder
 
 USER root
+
+RUN microdnf install golang
 
 COPY . /opt/output
 WORKDIR /opt/output
